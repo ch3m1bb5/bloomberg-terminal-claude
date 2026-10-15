@@ -1,6 +1,5 @@
 "use client";
 
-import { fetchFinancialNews } from "@/lib/alpha-vantage";
 import { ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { BloombergButton } from "../core/bloomberg-button";
@@ -37,13 +36,21 @@ export default function NewsView({ isDarkMode, onBack }: NewsViewProps) {
       try {
         setIsLoading(true);
         setError(null);
-        const newsData = await fetchFinancialNews(query);
-        if (newsData) {
-          setNews(newsData);
+        // Fetched through our own API route so the Alpha Vantage key stays on the server
+        const res = await fetch(`/api/news?q=${encodeURIComponent(query)}`, { cache: "no-store" });
+        const data = await res.json();
+        if (res.ok && Array.isArray(data.feed)) {
+          setNews(data.feed);
         } else {
-          setError("Could not fetch real news data. Showing sample news.");
+          setNews([]);
+          setError(
+            res.status === 503
+              ? "News needs an Alpha Vantage key — add ALPHA_VANTAGE_API_KEY to .env.local."
+              : `Could not load news: ${data.error ?? res.status}`,
+          );
         }
       } catch (err) {
+        setNews([]);
         setError("Failed to fetch news");
       } finally {
         setIsLoading(false);
@@ -101,7 +108,7 @@ export default function NewsView({ isDarkMode, onBack }: NewsViewProps) {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className={`px-2 py-1 text-xs bg-[${colors.background}] border border-[${colors.border}] rounded-none`}
-            placeholder="Search news..."
+            placeholder="Topic (technology, earnings…) or ticker (AAPL)"
           />
           <BloombergButton color="accent" onClick={() => fetchNews()} disabled={isLoading}>
             {isLoading ? <RefreshCw className="h-3 w-3 animate-spin" /> : "SEARCH"}

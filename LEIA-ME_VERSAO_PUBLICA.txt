@@ -1,0 +1,9 @@
+VERSAO PUBLICA — SEGURA PARA O GITHUB
+=====================================
+Chaves de API, credenciais, logs e .zip foram removidos.
+Para rodar: copie .env.example (ou .env.local.example) para .env
+(ou .env.local) e preencha com as suas chaves. O .gitignore ja
+impede que o .env seja enviado.
+
+NOTA: o arquivo de exemplo de chaves se chama "env.local.example".
+Renomeie para ".env.local" e preencha com as SUAS chaves.

@@ -21,6 +21,9 @@ import { BloombergButton } from "../core/bloomberg-button";
 import { bloombergColors } from "../lib/theme-config";
 import { Sparkline } from "../ui/sparkline";
 
+// Display label -> key used in the region checkboxes ("Asia/Pacific" -> "asiaPacific")
+const REGION_KEY: Record<string, string> = { Americas: "americas", EMEA: "emea", "Asia/Pacific": "asiaPacific" };
+
 interface MarketIndex {
   id: string;
   num: string;
@@ -96,7 +99,7 @@ export default function MarketMoversView({
     // Filter based on selected criteria
     const filtered = allIndices.filter((index) => {
       // Filter by region
-      if (!showRegions[index.region?.toLowerCase() || ""]) {
+      if (!showRegions[REGION_KEY[index.region ?? ""] ?? ""]) {
         return false;
       }
 

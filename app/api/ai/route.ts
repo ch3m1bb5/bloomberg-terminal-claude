@@ -1,141 +1,67 @@
-import { openai } from "@ai-sdk/openai";
-import { streamText } from "ai";
-import { type CoreMessage, Message } from "ai";
-import { type NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { rateLimit } from "./rate-limit";
+import Anthropic from "@anthropic-ai/sdk";
+import { type NextRequest } from "next/server";
+import { guardAiRequest } from "./guard";
 
-// Allow streaming responses up to 30 seconds
 export const maxDuration = 30;
-
-export const runtime = "edge";
-
-// Define validation schema for request body
-const requestSchema = z.object({
-  messages: z
-    .array(
-      z.object({
-        role: z.enum(["user", "assistant", "system"]),
-        content: z.string().max(4000),
-      })
-    )
-    .max(20), // Limit number of messages
-  marketData: z.record(z.any()).optional(),
-});
+export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
-    // Check rate limits first
-    const rateLimitResult = await rateLimit(req, {
-      maxRequests: 20, // 20 requests per minute per IP
-      windowInSeconds: 60,
-    });
+    const blocked = await guardAiRequest(req, { maxRequests: 20, windowInSeconds: 60 });
+    if (blocked) return blocked;
 
-    // If rate limit exceeded, return 429 Too Many Requests
-    if (!rateLimitResult.success) {
-      return new Response(
-        JSON.stringify({
-          error: "Rate limit exceeded. Please try again later.",
-          reset: rateLimitResult.reset,
-        }),
-        {
-          status: 429,
-          headers: {
-            "Content-Type": "application/json",
-            "X-RateLimit-Limit": rateLimitResult.limit.toString(),
-            "X-RateLimit-Remaining": rateLimitResult.remaining.toString(),
-            "X-RateLimit-Reset": rateLimitResult.reset.toString(),
-          },
-        }
-      );
-    }
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-    // Get request origin
-    const origin = req.headers.get("origin") || "";
-
-    // Get allowed origins from environment variable
-    // Format: comma-separated list of domains (e.g., "https://domain1.com,https://domain2.com")
-    const allowedOriginsEnv = process.env.ALLOWED_ORIGINS || "";
-    const allowedOrigins = allowedOriginsEnv
-      .split(",")
-      .map((origin) => origin.trim())
-      .filter(Boolean);
-
-    // Always allow production URL if specified
-    if (process.env.VERCEL_URL) {
-      const vercelUrl = `https://${process.env.VERCEL_URL}`;
-      if (!allowedOrigins.includes(vercelUrl)) {
-        allowedOrigins.push(vercelUrl);
-      }
-    }
-
-    // In development, also allow localhost origins if no origins are specified
-    if (process.env.NODE_ENV === "development" && allowedOrigins.length === 0) {
-      allowedOrigins.push("http://localhost:3000");
-    }
-
-    // Skip origin check if no allowed origins are specified (not recommended for production)
-    if (allowedOrigins.length > 0 && !allowedOrigins.includes(origin)) {
-      return new Response(JSON.stringify({ error: "Unauthorized origin" }), {
-        status: 403,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    // Parse and validate request body
     const body = await req.json();
-    const validationResult = requestSchema.safeParse(body);
+    const messages = (body.messages || []).slice(0, 20);
+    const marketData = body.marketData || {};
+    const sanitizedMarketData = JSON.stringify(marketData).slice(0, 5000);
 
-    if (!validationResult.success) {
-      return new Response(
-        JSON.stringify({
-          error: "Invalid request format",
-          details: validationResult.error.errors,
-        }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
-    }
+    const systemPrompt = `You are Claude, an AI financial analyst embedded in a Bloomberg Terminal. Provide concise, insightful commentary about market data. Current market data: ${sanitizedMarketData}. Keep responses brief and professional. Never provide specific investment advice.`;
 
-    const { messages, marketData } = validationResult.data;
+    const anthropicMessages = messages
+      .filter((m: { role: string; content: string }) => m.role !== "system")
+      .map((m: { role: string; content: string }) => ({
+        role: m.role as "user" | "assistant",
+        content: String(m.content).slice(0, 4000),
+      }));
 
-    // Sanitize market data to prevent injection
-    const sanitizedMarketData = marketData
-      ? JSON.stringify(marketData).slice(0, 5000)
-      : // Limit size
-        "{}";
+    const validMessages = anthropicMessages.length > 0 && anthropicMessages[0].role === "user"
+      ? anthropicMessages
+      : [{ role: "user" as const, content: "Hello" }, ...anthropicMessages];
 
-    const systemPrompt = `You are an AI financial analyst for a Bloomberg Terminal clone.
-You provide concise, insightful commentary and answer questions about market data.
-Current market data context: ${sanitizedMarketData}
-Keep responses brief, professional, and focused on financial insights.
-Never provide investment advice or make specific trading recommendations.`;
-
-    // Prepend the system message to the messages array and ensure correct typing
-    const messagesWithSystem: CoreMessage[] = [
-      { role: "system", content: systemPrompt } as CoreMessage,
-      ...messages.map((m) => ({ role: m.role, content: m.content }) as CoreMessage),
-    ];
-
-    // Use the AI SDK to stream text with strict limits
-    const result = streamText({
-      model: openai("gpt-4"),
-      messages: messagesWithSystem,
-      temperature: 0.7,
-      maxTokens: 500, // Strict token limit
+    const stream = await client.messages.stream({
+      model: "claude-sonnet-4-5",
+      max_tokens: 500,
+      system: systemPrompt,
+      messages: validMessages,
     });
 
-    // Return the stream with rate limit headers
-    const response = result.toDataStreamResponse();
-    response.headers.set("X-RateLimit-Limit", rateLimitResult.limit.toString());
-    response.headers.set("X-RateLimit-Remaining", rateLimitResult.remaining.toString());
-    response.headers.set("X-RateLimit-Reset", rateLimitResult.reset.toString());
+    const encoder = new TextEncoder();
+    const readable = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const chunk of stream) {
+            if (chunk.type === "content_block_delta" && chunk.delta.type === "text_delta") {
+              controller.enqueue(encoder.encode(`0:${JSON.stringify(chunk.delta.text)}\n`));
+            }
+          }
+        } finally {
+          controller.close();
+        }
+      },
+    });
 
-    return response;
+    return new Response(readable, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "X-Vercel-AI-Data-Stream": "v1",
+      },
+    });
   } catch (error) {
     console.error("AI API error:", error);
     return new Response(JSON.stringify({ error: "Failed to generate AI response" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
+      status: 500, headers: { "Content-Type": "application/json" },
     });
   }
 }

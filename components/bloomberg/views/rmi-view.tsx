@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   Select,
@@ -101,11 +101,12 @@ export function RmiView() {
     );
   }
 
-  // Get all available securities for the selected region
-  // If no security is selected yet, select the first one
-  if (!selectedSecurity && securities.length > 0) {
-    setSelectedSecurity(securities[0].id);
-  }
+  // Auto-select first security via useEffect to avoid setState-during-render
+  useEffect(() => {
+    if (!selectedSecurity && securities.length > 0) {
+      setSelectedSecurity(securities[0].id);
+    }
+  }, [selectedSecurity, securities, setSelectedSecurity]);
 
   // Find the selected security and benchmark
   const selectedSecurityData = securities.find((item: MarketItem) => item.id === selectedSecurity);
@@ -520,3 +521,4 @@ export function RmiView() {
     </div>
   );
 }
+

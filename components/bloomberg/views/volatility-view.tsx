@@ -16,6 +16,9 @@ import { BloombergButton } from "../core/bloomberg-button";
 import { bloombergColors } from "../lib/theme-config";
 import { Sparkline } from "../ui/sparkline";
 
+// Display label -> key used in the region checkboxes ("Asia/Pacific" -> "asiaPacific")
+const REGION_KEY: Record<string, string> = { Americas: "americas", EMEA: "emea", "Asia/Pacific": "asiaPacific" };
+
 interface MarketIndex {
   id: string;
   num: string;
@@ -194,8 +197,8 @@ export default function VolatilityView({
 
   // Generate realistic historical volatility based on market data
   const generateHistoricalVolatility = (index: MarketIndex): number => {
-    // Base volatility on absolute percentage change and add some randomness
-    const baseVol = Math.abs(index.pctChange) * (1.5 + Math.random());
+    // Annualise the daily % move (x sqrt(252)) and add some randomness
+    const baseVol = Math.abs(index.pctChange) * Math.sqrt(252) * (0.8 + Math.random() * 0.4);
 
     // Add some market-specific adjustments
     let adjustedVol = baseVol;
@@ -262,7 +265,7 @@ export default function VolatilityView({
     return volatilityData
       .filter((item) => {
         // Filter by region
-        if (!showRegions[item.region.toLowerCase()]) {
+        if (!showRegions[REGION_KEY[item.region] ?? ""]) {
           return false;
         }
 

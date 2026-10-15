@@ -1,103 +1,92 @@
-# Bloomberg Terminal Clone
+# Bloomberg Terminal + Claude
 
-Clone of the Bloomberg Terminal built with Next.js 15, React 19, and TypeScript. This project demonstrates real-time financial data visualization with a professional interface inspired by the Bloomberg Terminal. Structured as an SPA because for a terminal with constantly mutating financial data, URL structure and browser history have limited utility compared to a traditional SPA approach.
+> **Fork of [feremabraz/bloomberg-terminal](https://github.com/feremabraz/bloomberg-terminal)**, a Bloomberg Terminal clone built with Next.js 15, React 19 and TypeScript. All credit for the original terminal goes to its author.
+> This fork replaces the OpenAI integration with **Anthropic's Claude**, adds **four AI endpoints**, and fixes several bugs in the original views.
 
-![Preview](README.png)
+![Terminal: market overview with AI analysis panel](docs/images/terminal-markets.png)
+<sub>Screenshots taken locally with no API keys. Market values are the terminal's built-in **simulated data**, which it uses when Alpha Vantage and Redis are not configured.</sub>
 
-## Features
+---
 
-- **Real-time Market Data**: Simulated market updates with configurable refresh rates
-- **Multiple Views**: Market data, news, market movers, and volatility analysis
-- **Interactive UI**: Terminal-like interface with keyboard shortcuts
-- **Watchlist**: Create and manage lists of financial instruments
-- **Dark/Light Mode**: Toggle between color schemes
-- **Responsive Design**: Works on desktop and tablet devices
+## What you'll find in the terminal
 
-## Tech Stack
+### Market overview + AI Market Analysis
+Global indices grouped by **Americas, EMEA and Asia/Pacific**, with value, net and % change, 2-day sparklines, Δ AVAT, YTD and YTD in USD. Values update live and changed cells flash.
 
-- **Framework**: Next.js 15 (App Router)
-- **UI Library**: React 19 with shadcn/ui components
-- **Styling**: Tailwind CSS
-- **State Management**: Jotai for local state, React Query for server state
-- **Data Storage**: Upstash Redis
-- **Animation**: Motion (formerly Framer Motion)
-- **Linting/Formatting**: Biome.js
+At the bottom, the **AI Market Analysis** panel is powered by Claude:
+- **MARKET OVERVIEW** writes a commentary on the data currently on screen.
+- **Ask About Market Data** is a streaming chat (e.g. *"Which region is leading today and why?"*). Claude receives the live table as context.
 
-## Getting Started
+The top bar holds the views (`NEWS`, `GMOV`, `GVOL`, `RMI`), a dark/light toggle, live updates and refresh.
 
-### Prerequisites
+### Global Market Movers (`GMOV`)
+![Global market movers](docs/images/market-movers.png)
+Every index ranked by the size of its move, filtered by region, gainers or losers, and a minimum % move.
 
-- Node LTS
-- pnpm
+### Global Volatility (`GVOL`)
+![Global volatility](docs/images/volatility.png)
+Annualised historical vs implied volatility, vol ratio, daily and weekly range, a volatility sparkline and RSI, sortable by HV, ratio or range.
 
-### Environment Variables
+### Relative Market Index (`RMI`)
+![Relative market index](docs/images/relative-market-index.png)
+Shows how one index performs **relative to a benchmark**, rebased to 100 (e.g. Dow Jones vs S&P 500), with chart, table and analysis tabs and 1D to 1Y ranges.
 
-Create a `.env.local` file with the following variables:
+### News (`NEWS`)
+Financial news with sentiment from **Alpha Vantage**. Search by topic (`technology`, `earnings`, `economy_macro`…) or by ticker (`AAPL`). Needs `ALPHA_VANTAGE_API_KEY`.
 
+### Keyboard shortcuts (`HELP` or `?`)
+![Keyboard shortcuts](docs/images/keyboard-shortcuts.png)
+
+---
+
+## AI endpoints added by this fork
+All four use Claude through the official `@anthropic-ai/sdk` and share one guard (`app/api/ai/guard.ts`). The guard checks that the API key is configured, applies a **per-IP rate limit** (Upstash Redis, or in-memory when Redis isn't configured) and checks **allowed origins**. Inputs are validated with Zod.
+
+| Endpoint | What it does | Hook |
+|---|---|---|
+| `POST /api/ai` | Streaming market chat with the live market table as context (used by the AI panel) | built into `ai-market-analysis.tsx` |
+| `POST /api/ai/watchlist-analysis` | Briefing on a watchlist: top movers, correlations, risks, sentiment | `useWatchlistAnalysis` |
+| `POST /api/ai/command` | Natural-language command → structured JSON, e.g. *"alert me if AAPL RSI < 30"* → `{intent, conditions, symbols, action}` | `useTerminalCommand` |
+| `POST /api/ai/report` | Streaming reports: `market_summary`, `volatility`, `movers`, `sector` or `custom`, brief or detailed | `useReportGeneration` |
+
+The three newer endpoints come with ready-to-use React hooks in `components/bloomberg/hooks/`. The current UI uses `/api/ai`. Wiring the hooks into new panels is a good next step.
+
+Example:
+```bash
+curl -X POST http://localhost:3000/api/ai/command \
+  -H "Content-Type: application/json" -H "Origin: http://localhost:3000" \
+  -d '{"command":"alert me if AAPL RSI < 30"}'
 ```
-# Upstash Redis connection details
-UPSTASH_REDIS_REST_URL=your_upstash_redis_url
-UPSTASH_REDIS_REST_TOKEN=your_upstash_redis_token
 
-# Alpha Vantage API key for market data
-ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key
+## Fixes in this fork
+- **News never loaded.** The browser called Alpha Vantage directly with a server-only key (`apikey=undefined`). It now goes through a server route (`/api/news`) that keeps the key private and maps searches to valid topics or tickers.
+- **Asia/Pacific was missing** from Market Movers and Volatility, because the region filter compared `"asia/pacific"` with `"asiaPacific"`.
+- **Historical volatility showed 5.00% for every index.** A daily % move was used as an annual volatility and hit the 5% floor. It is now annualised (×√252).
+- **The RMI chart plunged to −88% or below zero.** It divided 0-to-1 sparkline shapes as if they were prices. They are now turned into price paths before the ratio is taken.
+- **AI routes no longer require Redis** for local use (in-memory rate-limit fallback), and the main route no longer logs the API key's length.
 
-# OpenAI API key for AI features
-OPENAI_API_KEY=your_openai_api_key
-
-# Allowed origins for API access (comma-separated list, no spaces)
-ALLOWED_ORIGINS=https://your-domain.com,http://localhost:3000
+## Quick start
+Requires Node LTS and pnpm.
+```bash
+pnpm install
+cp env.local.example .env.local      # Windows: copy env.local.example .env.local
+pnpm dev                             # http://localhost:3000
 ```
+The terminal runs **without any keys** using simulated market data. Add keys to enable each feature:
 
-## Project Structure
+| Variable | Needed for |
+|---|---|
+| `ANTHROPIC_API_KEY` | AI panel and all `/api/ai/*` endpoints ([console.anthropic.com](https://console.anthropic.com)) |
+| `ALPHA_VANTAGE_API_KEY` | News and real market quotes ([alphavantage.co](https://www.alphavantage.co/support/#api-key)) |
+| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | Cached market data and shared rate limiting (optional locally) |
+| `ALLOWED_ORIGINS` | Origins allowed to call the AI endpoints. Defaults to `http://localhost:3000`. Add your URL if you deploy |
 
-The project is structured as follows:
+This repository contains **no API keys**. `.env` and `.env.local` are in `.gitignore`.
 
-- `/app`: Next.js App Router pages and API routes
-- `/components/bloomberg`: Terminal-specific components
-  - `/api`: API client functions for market data fetching and simulation
-  - `/atoms`: Jotai atoms for local state management
-  - `/core`: Core Bloomberg Terminal components
-    - Reusable UI elements specific to the terminal (buttons, modals, etc.)
-    - User interaction components (keyboard shortcuts, watchlist, etc.)
-  - `/hooks`: Custom React hooks for data fetching and UI state
-  - `/layout`: Layout components that define the terminal structure
-    - Terminal container, header, footer, and navigation elements
-  - `/lib`: Terminal-specific utility functions and configuration
-  - `/providers`: Context providers for React Query and other global state
-  - `/ui`: Terminal-specific UI components
-    - Data visualization components (tables, sparklines, etc.)
-    - Terminal-specific UI elements that aren't part of the core
-  - `/views`: Main view components for different terminal screens
-    - Market view, news view, volatility view, etc.
-- `/components/ui`: shadcn/ui base components (design system)
-- `/lib`: Application-wide utility functions and shared code
-- `/public`: Static assets and images
-
-### Component Organization Philosophy
-
-Components are organized based on:
-
-- **Core Components**: Foundational UI elements specific to the Bloomberg Terminal interface
-- **Layout Components**: Define the overall structure and layout of the application
-- **UI Components**: Specialized components for data visualization and user interaction
-- **View Components**: Complete screens or major sections of the application
-
-## Performance Optimizations
-
-- React Query for efficient data fetching and caching
-- Optimized update cycles to reduce API calls
-- Memoization of expensive calculations
-- Conditional rendering for performance-critical components
-
-## Security Features
-
-- **Origin Restriction**: API endpoints are restricted to specific domains configured via the `ALLOWED_ORIGINS` environment variable
-- **Rate Limiting**: Prevents abuse by limiting requests per IP address
-- **Input Validation**: All API inputs are validated and sanitized using Zod schemas
-- **Response Limiting**: AI responses are limited in token count to prevent excessive usage
-- **Environment Variables**: Sensitive keys are stored in environment variables and not exposed to the client
+## Tech stack
+Next.js 15 (App Router) · React 19 · TypeScript · Tailwind CSS · shadcn/ui · Jotai · TanStack Query · Recharts · Upstash Redis · Anthropic Claude API · Zod · Biome
 
 ## License
+The original project is MIT-licensed. This fork keeps the same license.
 
-MIT
+**Fork maintained by:** Rodrigo Chemite Barbosa · [github.com/ch3m1bb5](https://github.com/ch3m1bb5)

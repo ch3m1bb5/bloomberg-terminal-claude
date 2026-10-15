@@ -40,7 +40,14 @@ export function RmiChart({ marketItem, benchmarkItem, width = 600, height = 300 
   // We'll generate sample data based on the sparkline data
   const generateRmiData = (): RmiDataPoint[] => {
     // We use sparkline data if available, otherwise generate sample data
-    const marketValues = marketItem.sparkline1 || [
+    // Sparklines are 0..1 shapes, not prices: turn them into a price path that ends at the
+    // current value (±2% range) so the ratio below is meaningful
+    const toPricePath = (shape: number[] | undefined, last: number) =>
+      shape && shape.length > 1
+        ? shape.map((s) => last * (1 + (s - shape[shape.length - 1]) * 0.02))
+        : undefined;
+
+    const marketValues = toPricePath(marketItem.sparkline1, marketItem.value) || [
       marketItem.value * 0.95,
       marketItem.value * 0.97,
       marketItem.value * 0.96,
@@ -49,7 +56,8 @@ export function RmiChart({ marketItem, benchmarkItem, width = 600, height = 300 
       marketItem.value,
     ];
 
-    const benchmarkValues = benchmarkItem?.sparkline1 || [100, 101, 99, 102, 103, 104];
+    const benchmarkValues =
+      (benchmarkItem && toPricePath(benchmarkItem.sparkline1, benchmarkItem.value)) || [100, 101, 99, 102, 103, 104];
 
     // Generate dates for the last N days based on timeRange
     const days = marketValues.length;
